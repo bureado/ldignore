@@ -12,26 +12,29 @@ nm -D ldignore.so | grep -E "^[0-9a-f]+ T (open|readlink)" | head -4
 
 echo ""
 echo "3. Quick functional test:"
-mkdir -p /tmp/ldignore_test
-cd /tmp/ldignore_test
+ORIG_DIR=$(pwd)
+LIB_PATH="$ORIG_DIR/ldignore.so"
+TMP_DIR=/tmp/ldignore_test
+mkdir -p "$TMP_DIR"
+pushd "$TMP_DIR" > /dev/null
 echo "secret data" > secret.txt
 echo "public data" > public.txt
 echo "secret.txt" > .claudeignore
 
 echo "   - Without enforcement (should succeed with warning):"
-LDIGNORE_DEBUG=1 LD_PRELOAD=/home/runner/work/ldignore/ldignore/ldignore.so cat secret.txt 2>&1 | grep -E "(ldignore|secret)"
+LDIGNORE_DEBUG=1 LD_PRELOAD="$LIB_PATH" cat secret.txt 2>&1 | grep -E "(ldignore|secret)"
 
 echo ""
 echo "   - With enforcement (should fail):"
-LDIGNORE_DEBUG=1 LDIGNORE_ENFORCE=1 LD_PRELOAD=/home/runner/work/ldignore/ldignore/ldignore.so cat secret.txt 2>&1 | grep -E "(ldignore|Permission)" || echo "   ✅ Access correctly denied"
+LDIGNORE_DEBUG=1 LDIGNORE_ENFORCE=1 LD_PRELOAD="$LIB_PATH" cat secret.txt 2>&1 | grep -E "(ldignore|Permission)" || echo "   ✅ Access correctly denied"
 
 echo ""
 echo "   - Public file access (should succeed):"
-LDIGNORE_ENFORCE=1 LD_PRELOAD=/home/runner/work/ldignore/ldignore/ldignore.so cat public.txt
+LDIGNORE_ENFORCE=1 LD_PRELOAD="$LIB_PATH" cat public.txt
 
 echo ""
-cd /home/runner/work/ldignore/ldignore
-rm -rf /tmp/ldignore_test
+popd > /dev/null
+rm -rf "$TMP_DIR"
 
 echo "=== VERIFICATION COMPLETE ==="
 echo ""
