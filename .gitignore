@@ -1,0 +1,16 @@
+# Build artifacts
+*.o
+*.so
+test_ldignore
+test_output.txt
+test_dir/
+
+# Editor files
+*~
+*.swp
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
