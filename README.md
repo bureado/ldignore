@@ -43,11 +43,18 @@ LDIGNORE_ENFORCE=1 LD_PRELOAD=./ldignore.so your_program [args...]
 
 ### Enable Debug Output
 
-To see which files are being blocked:
+To see which files are being blocked, debug messages are logged to syslog:
 
 ```bash
 LDIGNORE_DEBUG=1 LD_PRELOAD=./ldignore.so your_program [args...]
 ```
+
+Debug messages can be viewed using `journalctl`:
+```bash
+journalctl -t ldignore -f
+```
+
+Or by checking `/var/log/syslog` or `/var/log/messages` depending on your system configuration.
 
 ### Combined Example
 

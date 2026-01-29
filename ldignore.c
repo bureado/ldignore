@@ -9,6 +9,7 @@
 #include <stdarg.h>
 #include <linux/limits.h>
 #include <pthread.h>
+#include <syslog.h>
 #include "ignore_parser.h"
 
 /* Function pointers to the real syscalls */
@@ -28,6 +29,9 @@ static __thread int in_check = 0;
 
 /* Initialize the library */
 static void ldignore_init_internal(void) {
+    /* Initialize syslog for debug output */
+    openlog("ldignore", LOG_PID | LOG_NDELAY, LOG_USER);
+    
     /* Get real function pointers */
     real_open = dlsym(RTLD_NEXT, "open");
     real_openat = dlsym(RTLD_NEXT, "openat");
@@ -36,7 +40,7 @@ static void ldignore_init_internal(void) {
     
     /* Check if we successfully got the real functions */
     if (!real_open || !real_openat || !real_readlink || !real_readlinkat) {
-        fprintf(stderr, "[ldignore] ERROR: Failed to find real syscalls\n");
+        syslog(LOG_ERR, "ERROR: Failed to find real syscalls");
         return;
     }
     
@@ -51,7 +55,7 @@ static void ldignore_init_internal(void) {
     debug_mode = (debug_env && strcmp(debug_env, "1") == 0);
     
     if (debug_mode) {
-        fprintf(stderr, "[ldignore] Initialized (enforce=%d)\n", enforce_mode);
+        syslog(LOG_INFO, "Initialized (enforce=%d)", enforce_mode);
     }
     
     initialized = 1;
@@ -66,6 +70,7 @@ static void __attribute__((destructor)) ldignore_cleanup(void) {
     if (initialized) {
         ignore_cleanup();
         initialized = 0;
+        closelog();
     }
 }
 
@@ -139,7 +144,7 @@ int open(const char *pathname, int flags, ...) {
         
         if (should_block) {
             if (debug_mode) {
-                fprintf(stderr, "[ldignore] Blocked open: %s\n", pathname);
+                syslog(LOG_INFO, "Blocked open: %s", pathname);
             }
             
             if (enforce_mode) {
@@ -189,7 +194,7 @@ int openat(int dirfd, const char *pathname, int flags, ...) {
                 in_check = 0;
                 
                 if (debug_mode) {
-                    fprintf(stderr, "[ldignore] Blocked openat: %s\n", full_path);
+                    syslog(LOG_INFO, "Blocked openat: %s", full_path);
                 }
                 
                 if (enforce_mode) {
@@ -229,7 +234,7 @@ ssize_t readlink(const char *pathname, char *buf, size_t bufsiz) {
         
         if (should_block) {
             if (debug_mode) {
-                fprintf(stderr, "[ldignore] Blocked readlink: %s\n", pathname);
+                syslog(LOG_INFO, "Blocked readlink: %s", pathname);
             }
             
             if (enforce_mode) {
@@ -265,7 +270,7 @@ ssize_t readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz) {
                 in_check = 0;
                 
                 if (debug_mode) {
-                    fprintf(stderr, "[ldignore] Blocked readlinkat: %s\n", full_path);
+                    syslog(LOG_INFO, "Blocked readlinkat: %s", full_path);
                 }
                 
                 if (enforce_mode) {
