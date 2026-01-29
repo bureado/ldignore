@@ -169,14 +169,26 @@ bool should_ignore(const char *path) {
             struct stat st;
             if (stat(ignore_path, &st) == 0 && S_ISREG(st.st_mode)) {
                 /* Read patterns from file */
-                char patterns[MAX_PATTERNS][MAX_PATTERN_LEN];
+                char (*patterns)[MAX_PATTERN_LEN] = malloc((size_t)MAX_PATTERNS * (size_t)MAX_PATTERN_LEN);
+                if (!patterns) {
+                    /* Allocation failed; skip this ignore file gracefully */
+                    continue;
+                }
                 int pattern_count = read_patterns_from_file(ignore_path, patterns, MAX_PATTERNS);
-                
+
                 /* Check if path matches any pattern */
+                int match_found = 0;
                 for (int j = 0; j < pattern_count; j++) {
                     if (matches_pattern(abs_path, patterns[j], current_dir)) {
-                        return true;
+                        match_found = 1;
+                        break;
                     }
+                }
+
+                free(patterns);
+
+                if (match_found) {
+                    return true;
                 }
             }
         }
