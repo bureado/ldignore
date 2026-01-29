@@ -8,18 +8,6 @@
 #include <unistd.h>
 #include <stdarg.h>
 #include <linux/limits.h>
-#include "ignore_parser.h"
-
-#define _GNU_SOURCE
-#include <dlfcn.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <stdarg.h>
-#include <linux/limits.h>
 #include <pthread.h>
 #include "ignore_parser.h"
 
