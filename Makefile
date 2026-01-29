@@ -2,7 +2,7 @@
 
 CC = gcc
 CFLAGS = -Wall -Wextra -O2 -fPIC -D_GNU_SOURCE
-LDFLAGS = -shared -ldl
+LDFLAGS = -shared -ldl -lpthread
 
 # Library name
 LIB = ldignore.so

@@ -10,6 +10,19 @@
 #include <linux/limits.h>
 #include "ignore_parser.h"
 
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <stdarg.h>
+#include <linux/limits.h>
+#include <pthread.h>
+#include "ignore_parser.h"
+
 /* Function pointers to the real syscalls */
 static int (*real_open)(const char *pathname, int flags, ...) = NULL;
 static int (*real_openat)(int dirfd, const char *pathname, int flags, ...) = NULL;
@@ -20,18 +33,24 @@ static ssize_t (*real_readlinkat)(int dirfd, const char *pathname, char *buf, si
 static int enforce_mode = 0;
 static int debug_mode = 0;
 static int initialized = 0;
+static pthread_once_t init_once = PTHREAD_ONCE_INIT;
+
+/* Thread-local flag to prevent recursion */
+static __thread int in_check = 0;
 
 /* Initialize the library */
-static void __attribute__((constructor)) ldignore_init(void) {
-    if (initialized) {
-        return;
-    }
-    
+static void ldignore_init_internal(void) {
     /* Get real function pointers */
     real_open = dlsym(RTLD_NEXT, "open");
     real_openat = dlsym(RTLD_NEXT, "openat");
     real_readlink = dlsym(RTLD_NEXT, "readlink");
     real_readlinkat = dlsym(RTLD_NEXT, "readlinkat");
+    
+    /* Check if we successfully got the real functions */
+    if (!real_open || !real_openat || !real_readlink || !real_readlinkat) {
+        fprintf(stderr, "[ldignore] ERROR: Failed to find real syscalls\n");
+        return;
+    }
     
     /* Initialize ignore parser */
     ignore_init();
@@ -48,6 +67,10 @@ static void __attribute__((constructor)) ldignore_init(void) {
     }
     
     initialized = 1;
+}
+
+static void __attribute__((constructor)) ldignore_init(void) {
+    pthread_once(&init_once, ldignore_init_internal);
 }
 
 /* Cleanup function */
@@ -112,17 +135,29 @@ int open(const char *pathname, int flags, ...) {
     }
     
     if (!initialized) {
-        ldignore_init();
+        pthread_once(&init_once, ldignore_init_internal);
     }
     
-    if (pathname && should_ignore(pathname)) {
-        if (debug_mode) {
-            fprintf(stderr, "[ldignore] Blocked open: %s\n", pathname);
-        }
+    if (!real_open) {
+        errno = ENOSYS;
+        return -1;
+    }
+    
+    /* Prevent recursion when reading ignore files */
+    if (!in_check && pathname && initialized) {
+        in_check = 1;
+        int should_block = should_ignore(pathname);
+        in_check = 0;
         
-        if (enforce_mode) {
-            errno = EACCES;
-            return -1;
+        if (should_block) {
+            if (debug_mode) {
+                fprintf(stderr, "[ldignore] Blocked open: %s\n", pathname);
+            }
+            
+            if (enforce_mode) {
+                errno = EACCES;
+                return -1;
+            }
         }
     }
     
@@ -147,22 +182,36 @@ int openat(int dirfd, const char *pathname, int flags, ...) {
     }
     
     if (!initialized) {
-        ldignore_init();
+        pthread_once(&init_once, ldignore_init_internal);
     }
     
-    /* Resolve full path */
-    char full_path[PATH_MAX];
-    if (pathname && resolve_dirfd_path(dirfd, pathname, full_path, sizeof(full_path))) {
-        if (should_ignore(full_path)) {
-            if (debug_mode) {
-                fprintf(stderr, "[ldignore] Blocked openat: %s\n", full_path);
-            }
-            
-            if (enforce_mode) {
-                errno = EACCES;
-                return -1;
+    if (!real_openat) {
+        errno = ENOSYS;
+        return -1;
+    }
+    
+    /* Prevent recursion when reading ignore files */
+    if (!in_check && pathname && initialized) {
+        in_check = 1;
+        
+        /* Resolve full path */
+        char full_path[PATH_MAX];
+        if (resolve_dirfd_path(dirfd, pathname, full_path, sizeof(full_path))) {
+            if (should_ignore(full_path)) {
+                in_check = 0;
+                
+                if (debug_mode) {
+                    fprintf(stderr, "[ldignore] Blocked openat: %s\n", full_path);
+                }
+                
+                if (enforce_mode) {
+                    errno = EACCES;
+                    return -1;
+                }
             }
         }
+        
+        in_check = 0;
     }
     
     /* Call real openat */
@@ -176,17 +225,29 @@ int openat(int dirfd, const char *pathname, int flags, ...) {
 /* Overloaded readlink() */
 ssize_t readlink(const char *pathname, char *buf, size_t bufsiz) {
     if (!initialized) {
-        ldignore_init();
+        pthread_once(&init_once, ldignore_init_internal);
     }
     
-    if (pathname && should_ignore(pathname)) {
-        if (debug_mode) {
-            fprintf(stderr, "[ldignore] Blocked readlink: %s\n", pathname);
-        }
+    if (!real_readlink) {
+        errno = ENOSYS;
+        return -1;
+    }
+    
+    /* Prevent recursion when reading ignore files */
+    if (!in_check && pathname && initialized) {
+        in_check = 1;
+        int should_block = should_ignore(pathname);
+        in_check = 0;
         
-        if (enforce_mode) {
-            errno = EACCES;
-            return -1;
+        if (should_block) {
+            if (debug_mode) {
+                fprintf(stderr, "[ldignore] Blocked readlink: %s\n", pathname);
+            }
+            
+            if (enforce_mode) {
+                errno = EACCES;
+                return -1;
+            }
         }
     }
     
@@ -197,22 +258,36 @@ ssize_t readlink(const char *pathname, char *buf, size_t bufsiz) {
 /* Overloaded readlinkat() */
 ssize_t readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz) {
     if (!initialized) {
-        ldignore_init();
+        pthread_once(&init_once, ldignore_init_internal);
     }
     
-    /* Resolve full path */
-    char full_path[PATH_MAX];
-    if (pathname && resolve_dirfd_path(dirfd, pathname, full_path, sizeof(full_path))) {
-        if (should_ignore(full_path)) {
-            if (debug_mode) {
-                fprintf(stderr, "[ldignore] Blocked readlinkat: %s\n", full_path);
-            }
-            
-            if (enforce_mode) {
-                errno = EACCES;
-                return -1;
+    if (!real_readlinkat) {
+        errno = ENOSYS;
+        return -1;
+    }
+    
+    /* Prevent recursion when reading ignore files */
+    if (!in_check && pathname && initialized) {
+        in_check = 1;
+        
+        /* Resolve full path */
+        char full_path[PATH_MAX];
+        if (resolve_dirfd_path(dirfd, pathname, full_path, sizeof(full_path))) {
+            if (should_ignore(full_path)) {
+                in_check = 0;
+                
+                if (debug_mode) {
+                    fprintf(stderr, "[ldignore] Blocked readlinkat: %s\n", full_path);
+                }
+                
+                if (enforce_mode) {
+                    errno = EACCES;
+                    return -1;
+                }
             }
         }
+        
+        in_check = 0;
     }
     
     /* Call real readlinkat */
