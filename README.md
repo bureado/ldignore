@@ -56,6 +56,8 @@ journalctl -t ldignore -f
 
 Or by checking `/var/log/syslog` or `/var/log/messages` depending on your system configuration.
 
+**Security Note**: Debug log messages include file paths that are blocked or accessed. These messages are stored in system logs which may be accessible to other users or log aggregation systems. Be aware of this when enabling debug mode in production environments.
+
 ### Combined Example
 
 ```bash

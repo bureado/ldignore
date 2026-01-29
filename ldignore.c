@@ -22,6 +22,7 @@ static ssize_t (*real_readlinkat)(int dirfd, const char *pathname, char *buf, si
 static int enforce_mode = 0;
 static int debug_mode = 0;
 static int initialized = 0;
+static int syslog_opened = 0;
 static pthread_once_t init_once = PTHREAD_ONCE_INIT;
 
 /* Thread-local flag to prevent recursion */
@@ -29,9 +30,6 @@ static __thread int in_check = 0;
 
 /* Initialize the library */
 static void ldignore_init_internal(void) {
-    /* Initialize syslog for debug output */
-    openlog("ldignore", LOG_PID | LOG_NDELAY, LOG_USER);
-    
     /* Get real function pointers */
     real_open = dlsym(RTLD_NEXT, "open");
     real_openat = dlsym(RTLD_NEXT, "openat");
@@ -40,6 +38,9 @@ static void ldignore_init_internal(void) {
     
     /* Check if we successfully got the real functions */
     if (!real_open || !real_openat || !real_readlink || !real_readlinkat) {
+        /* Initialize syslog for error reporting */
+        openlog("ldignore", LOG_PID | LOG_NDELAY, LOG_USER);
+        syslog_opened = 1;
         syslog(LOG_ERR, "ERROR: Failed to find real syscalls");
         return;
     }
@@ -54,7 +55,13 @@ static void ldignore_init_internal(void) {
     const char *debug_env = getenv("LDIGNORE_DEBUG");
     debug_mode = (debug_env && strcmp(debug_env, "1") == 0);
     
+    /* Initialize syslog only if debug mode is enabled */
     if (debug_mode) {
+        openlog("ldignore", LOG_PID | LOG_NDELAY, LOG_USER);
+        syslog_opened = 1;
+        /* Note: Logged file paths may contain sensitive information.
+         * Syslog messages are stored in system logs which may be accessible
+         * to other users or log aggregation systems. */
         syslog(LOG_INFO, "Initialized (enforce=%d)", enforce_mode);
     }
     
@@ -70,7 +77,11 @@ static void __attribute__((destructor)) ldignore_cleanup(void) {
     if (initialized) {
         ignore_cleanup();
         initialized = 0;
-        closelog();
+        /* Close syslog only if it was opened */
+        if (syslog_opened) {
+            closelog();
+            syslog_opened = 0;
+        }
     }
 }
 
