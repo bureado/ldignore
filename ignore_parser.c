@@ -158,10 +158,10 @@ bool should_ignore(const char *path) {
     
     /* Keep going up until we reach root */
     while (strlen(current_dir) > 0) {
-        /* Check for .claudeignore and .copilotignore */
-        const char *ignore_files[] = {".claudeignore", ".copilotignore"};
+        /* Check for .ldignore, .claudeignore and .copilotignore */
+        const char *ignore_files[] = {".ldignore", ".claudeignore", ".copilotignore"};
         
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < 3; i++) {
             char ignore_path[MAX_PATH_LEN];
             snprintf(ignore_path, sizeof(ignore_path), "%s/%s", current_dir, ignore_files[i]);
             

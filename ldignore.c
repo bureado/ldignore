@@ -17,6 +17,10 @@ static int (*real_open)(const char *pathname, int flags, ...) = NULL;
 static int (*real_openat)(int dirfd, const char *pathname, int flags, ...) = NULL;
 static ssize_t (*real_readlink)(const char *pathname, char *buf, size_t bufsiz) = NULL;
 static ssize_t (*real_readlinkat)(int dirfd, const char *pathname, char *buf, size_t bufsiz) = NULL;
+static FILE *(*real_fopen)(const char *pathname, const char *mode) = NULL;
+static FILE *(*real_fopen64)(const char *pathname, const char *mode) = NULL;
+static FILE *(*real_freopen)(const char *pathname, const char *mode, FILE *stream) = NULL;
+static FILE *(*real_freopen64)(const char *pathname, const char *mode, FILE *stream) = NULL;
 
 /* Environment variable to control behavior */
 static int enforce_mode = 0;
@@ -35,6 +39,10 @@ static void ldignore_init_internal(void) {
     real_openat = dlsym(RTLD_NEXT, "openat");
     real_readlink = dlsym(RTLD_NEXT, "readlink");
     real_readlinkat = dlsym(RTLD_NEXT, "readlinkat");
+    real_fopen = dlsym(RTLD_NEXT, "fopen");
+    real_fopen64 = dlsym(RTLD_NEXT, "fopen64");
+    real_freopen = dlsym(RTLD_NEXT, "freopen");
+    real_freopen64 = dlsym(RTLD_NEXT, "freopen64");
     
     /* Check if we successfully got the real functions */
     if (!real_open || !real_openat || !real_readlink || !real_readlinkat) {
@@ -226,6 +234,46 @@ int openat(int dirfd, const char *pathname, int flags, ...) {
     }
 }
 
+/* Overloaded open64() - needed for fopen() and other 64-bit file operations */
+int open64(const char *pathname, int flags, ...) {
+    mode_t mode = 0;
+    
+    /* Handle variable arguments for mode */
+    if (flags & O_CREAT) {
+        va_list args;
+        va_start(args, flags);
+        mode = va_arg(args, mode_t);
+        va_end(args);
+    }
+    
+    /* open64 is aliased to open on 64-bit systems, so delegate to our open() */
+    if (flags & O_CREAT) {
+        return open(pathname, flags, mode);
+    } else {
+        return open(pathname, flags);
+    }
+}
+
+/* Overloaded openat64() - needed for 64-bit file operations */
+int openat64(int dirfd, const char *pathname, int flags, ...) {
+    mode_t mode = 0;
+    
+    /* Handle variable arguments for mode */
+    if (flags & O_CREAT) {
+        va_list args;
+        va_start(args, flags);
+        mode = va_arg(args, mode_t);
+        va_end(args);
+    }
+    
+    /* openat64 is aliased to openat on 64-bit systems, so delegate to our openat() */
+    if (flags & O_CREAT) {
+        return openat(dirfd, pathname, flags, mode);
+    } else {
+        return openat(dirfd, pathname, flags);
+    }
+}
+
 /* Overloaded readlink() */
 ssize_t readlink(const char *pathname, char *buf, size_t bufsiz) {
     if (!initialized) {
@@ -296,4 +344,132 @@ ssize_t readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz) {
     
     /* Call real readlinkat */
     return real_readlinkat(dirfd, pathname, buf, bufsiz);
+}
+
+/* Overloaded fopen() - intercepts stdio file opening */
+FILE *fopen(const char *pathname, const char *mode) {
+    if (!initialized) {
+        pthread_once(&init_once, ldignore_init_internal);
+    }
+    
+    if (!real_fopen) {
+        errno = ENOSYS;
+        return NULL;
+    }
+    
+    /* Prevent recursion when reading ignore files */
+    if (!in_check && pathname && initialized) {
+        in_check = 1;
+        int should_block = should_ignore(pathname);
+        in_check = 0;
+        
+        if (should_block) {
+            if (debug_mode) {
+                syslog(LOG_INFO, "Blocked fopen: %s", pathname);
+            }
+            
+            if (enforce_mode) {
+                errno = EACCES;
+                return NULL;
+            }
+        }
+    }
+    
+    return real_fopen(pathname, mode);
+}
+
+/* Overloaded fopen64() */
+FILE *fopen64(const char *pathname, const char *mode) {
+    if (!initialized) {
+        pthread_once(&init_once, ldignore_init_internal);
+    }
+    
+    if (!real_fopen64) {
+        /* Fall back to fopen if fopen64 not available */
+        return fopen(pathname, mode);
+    }
+    
+    /* Prevent recursion when reading ignore files */
+    if (!in_check && pathname && initialized) {
+        in_check = 1;
+        int should_block = should_ignore(pathname);
+        in_check = 0;
+        
+        if (should_block) {
+            if (debug_mode) {
+                syslog(LOG_INFO, "Blocked fopen64: %s", pathname);
+            }
+            
+            if (enforce_mode) {
+                errno = EACCES;
+                return NULL;
+            }
+        }
+    }
+    
+    return real_fopen64(pathname, mode);
+}
+
+/* Overloaded freopen() */
+FILE *freopen(const char *pathname, const char *mode, FILE *stream) {
+    if (!initialized) {
+        pthread_once(&init_once, ldignore_init_internal);
+    }
+    
+    if (!real_freopen) {
+        errno = ENOSYS;
+        return NULL;
+    }
+    
+    /* Prevent recursion when reading ignore files */
+    if (!in_check && pathname && initialized) {
+        in_check = 1;
+        int should_block = should_ignore(pathname);
+        in_check = 0;
+        
+        if (should_block) {
+            if (debug_mode) {
+                syslog(LOG_INFO, "Blocked freopen: %s", pathname);
+            }
+            
+            if (enforce_mode) {
+                errno = EACCES;
+                return NULL;
+            }
+        }
+    }
+    
+    return real_freopen(pathname, mode, stream);
+}
+
+/* Overloaded freopen64() */
+FILE *freopen64(const char *pathname, const char *mode, FILE *stream) {
+    if (!initialized) {
+        pthread_once(&init_once, ldignore_init_internal);
+    }
+    
+    if (!real_freopen64) {
+        /* Fall back to freopen if freopen64 not available */
+        return freopen(pathname, mode, stream);
+    }
+    
+    /* Prevent recursion when reading ignore files */
+    if (!in_check && pathname && initialized) {
+        in_check = 1;
+        int should_block = should_ignore(pathname);
+        in_check = 0;
+        
+        if (should_block) {
+            if (debug_mode) {
+                syslog(LOG_INFO, "Blocked freopen64: %s", pathname);
+            }
+            
+            if (enforce_mode) {
+                errno = EACCES;
+                return NULL;
+            }
+        }
+    }
+    
+    return real_freopen64(pathname, mode, stream);
 }
